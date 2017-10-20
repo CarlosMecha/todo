@@ -9,6 +9,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 )
@@ -43,6 +45,13 @@ var (
 
 	// ErrInvalidVersion when the stored version is missing or invalid
 	ErrInvalidVersion = errors.New("invalid version")
+
+	// ErrNotFound when the file is not found
+	ErrNotFound = errors.New("not found")
+
+	contentEncoding = aws.String("")
+
+	contentType = aws.String("")
 )
 
 // Store retrieves and updates the TODO list
@@ -80,6 +89,10 @@ func (s *store) GetCurrentVersion() (time.Time, error) {
 	})
 
 	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == s3.ErrCodeNoSuchKey {
+			s.logger.Print("File not found")
+			return time.Time{}, ErrNotFound
+		}
 		s.logger.Printf("Error getting file info: %s", err.Error())
 		return time.Time{}, err
 	}
@@ -106,6 +119,10 @@ func (s *store) Get(version time.Time, writer io.Writer) (time.Time, error) {
 		Key:    s.key,
 	})
 	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == s3.ErrCodeNoSuchKey {
+			s.logger.Print("File not found")
+			return time.Time{}, ErrNotFound
+		}
 		s.logger.Printf("Error getting file: %s", err.Error())
 		return time.Time{}, err
 	}
@@ -149,6 +166,10 @@ func (s *store) GetHTMLView(writer io.Writer) error {
 		Key:    s.key,
 	})
 	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == s3.ErrCodeNoSuchKey {
+			s.logger.Print("View not found")
+			return ErrNotFound
+		}
 		s.logger.Printf("Error getting file: %s", err.Error())
 		return err
 	}
@@ -165,6 +186,45 @@ func (s *store) GetHTMLView(writer io.Writer) error {
 
 	if _, err := writer.Write([]byte(view)); err != nil {
 		s.logger.Printf("Error writing view: %s", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// SafePut overwrites the file if the new version is newer than the stored one.
+func (s *store) SafePut(version time.Time, reader io.Reader) error {
+	currentVersion, err := s.GetCurrentVersion()
+	if err != nil {
+		if err != ErrNotFound {
+			return err
+		}
+		currentVersion = time.Time{}
+	}
+
+	if currentVersion.After(version) {
+		s.logger.Printf("Version conflict, the stored version is newer")
+		return ErrVersionConflict
+	}
+
+	return s.write(version, reader)
+}
+
+// Overwrite overwrites the version stored.
+func (s *store) Overwrite(reader io.Reader) error {
+	return s.write(time.Now(), reader)
+}
+
+func (s *store) write(version time.Time, reader io.Reader) error {
+	if _, err := s.s3.PutObject(&s3.PutObjectInput{
+		Body:            aws.ReadSeekCloser(reader),
+		Bucket:          s.bucket,
+		Key:             s.key,
+		ContentEncoding: contentEncoding,
+		ContentType:     contentType,
+		Metadata:        map[string]*string{"version": aws.String(version.Format(time.RFC1123))},
+	}); err != nil {
+		s.logger.Printf("Can't store the file: %s", err.Error())
 		return err
 	}
 
