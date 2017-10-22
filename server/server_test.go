@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/carlosmecha/todo/store"
+	"github.com/carlosmecha/todo/util/testutil"
 )
 
 type mockStore struct {
@@ -29,11 +29,13 @@ func (m *mockStore) GetCurrentVersion() (time.Time, error) {
 
 func (m *mockStore) Get(version time.Time, writer io.Writer) (time.Time, error) {
 	m.t.Logf("Requested get %v", version.Format(time.RFC1123))
-	if !version.Equal(m.version) {
+	if version.Before(m.version) {
 		_, err := writer.Write(m.file)
 		return m.version, err
+	} else if version.Equal(m.version) {
+		return m.version, store.ErrNotModified
 	}
-	return m.version, store.ErrNotModified
+	return m.version, store.ErrVersionConflict
 }
 
 func (m *mockStore) GetHTMLView(writer io.Writer) error {
@@ -56,18 +58,6 @@ func (m *mockStore) Overwrite(reader io.Reader) error {
 	m.file, err = ioutil.ReadAll(reader)
 	m.version = time.Now()
 	return err
-}
-
-type body struct {
-	b *bytes.Buffer
-}
-
-func (b *body) Read(p []byte) (n int, err error) {
-	return b.b.Read(p)
-}
-
-func (b *body) Close() error {
-	return nil
 }
 
 func TestRun(t *testing.T) {
@@ -135,6 +125,13 @@ func TestGet(t *testing.T) {
 			path:         "/",
 			expectedCode: 304,
 			version:      mock.version.Format(time.RFC1123),
+		},
+		// Newer date
+		{
+			token:        "test",
+			path:         "/",
+			expectedCode: 409,
+			version:      mock.version.AddDate(1, 0, 0).Format(time.RFC1123),
 		},
 		// Invalid date
 		{
@@ -385,7 +382,7 @@ func TestPut(t *testing.T) {
 		}
 
 		if len(c.body) > 0 {
-			req.Body = &body{bytes.NewBuffer(c.body)}
+			req.Body = testutil.NewBufferCloser(c.body)
 			req.ContentLength = int64(len(c.body))
 		}
 

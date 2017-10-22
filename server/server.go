@@ -136,6 +136,10 @@ func (h *handler) get(resp http.ResponseWriter, req *http.Request) {
 				h.logger.Printf("The requested version is the same")
 				resp.WriteHeader(304)
 				return
+			} else if err == store.ErrVersionConflict {
+				h.logger.Printf("The requested version is newer than the stored one")
+				resp.WriteHeader(409)
+				return
 			}
 			h.logger.Printf("Error getting file")
 			resp.WriteHeader(500)

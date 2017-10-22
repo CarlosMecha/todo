@@ -49,9 +49,7 @@ var (
 	// ErrNotFound when the file is not found
 	ErrNotFound = errors.New("not found")
 
-	contentEncoding = aws.String("")
-
-	contentType = aws.String("")
+	contentType = aws.String("text/plain")
 )
 
 // Store retrieves and updates the TODO list
@@ -103,7 +101,7 @@ func (s *store) GetCurrentVersion() (time.Time, error) {
 		return time.Time{}, ErrInvalidVersion
 	}
 
-	version, err := time.Parse(*metadata, time.RFC1123)
+	version, err := time.Parse(time.RFC1123, *metadata)
 	if err != nil {
 		s.logger.Printf("Invalid stored version: %s", err.Error())
 		return time.Time{}, ErrInvalidVersion
@@ -134,7 +132,7 @@ func (s *store) Get(version time.Time, writer io.Writer) (time.Time, error) {
 		return time.Time{}, ErrInvalidVersion
 	}
 
-	currentVersion, err := time.Parse(*metadata, time.RFC1123)
+	currentVersion, err := time.Parse(time.RFC1123, *metadata)
 	if err != nil {
 		s.logger.Printf("Invalid stored version: %s", err.Error())
 		return time.Time{}, ErrInvalidVersion
@@ -152,8 +150,12 @@ func (s *store) Get(version time.Time, writer io.Writer) (time.Time, error) {
 			s.logger.Printf("Error writing file: %s", err.Error())
 			return time.Time{}, err
 		}
+	} else if currentVersion.Equal(version) {
+		s.logger.Print("The provided version is same as the content")
+		return time.Time{}, ErrNotModified
 	} else {
 		s.logger.Print("The provided version is newer than the content")
+		return time.Time{}, ErrVersionConflict
 	}
 
 	return currentVersion, nil
@@ -202,12 +204,12 @@ func (s *store) SafePut(version time.Time, reader io.Reader) error {
 		currentVersion = time.Time{}
 	}
 
-	if currentVersion.After(version) {
-		s.logger.Printf("Version conflict, the stored version is newer")
-		return ErrVersionConflict
+	if currentVersion.Before(version) {
+		return s.write(version, reader)
 	}
 
-	return s.write(version, reader)
+	s.logger.Printf("Version conflict, the stored version is newer")
+	return ErrVersionConflict
 }
 
 // Overwrite overwrites the version stored.
@@ -217,12 +219,11 @@ func (s *store) Overwrite(reader io.Reader) error {
 
 func (s *store) write(version time.Time, reader io.Reader) error {
 	if _, err := s.s3.PutObject(&s3.PutObjectInput{
-		Body:            aws.ReadSeekCloser(reader),
-		Bucket:          s.bucket,
-		Key:             s.key,
-		ContentEncoding: contentEncoding,
-		ContentType:     contentType,
-		Metadata:        map[string]*string{"version": aws.String(version.Format(time.RFC1123))},
+		Body:        aws.ReadSeekCloser(reader),
+		Bucket:      s.bucket,
+		Key:         s.key,
+		ContentType: contentType,
+		Metadata:    map[string]*string{"version": aws.String(version.Format(time.RFC1123))},
 	}); err != nil {
 		s.logger.Printf("Can't store the file: %s", err.Error())
 		return err
