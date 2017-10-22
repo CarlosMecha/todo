@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -42,7 +43,10 @@ func (m *mockStore) GetHTMLView(writer io.Writer) error {
 
 func (m *mockStore) SafePut(version time.Time, reader io.Reader) error {
 	if version.After(m.version) {
-		return m.Overwrite(reader)
+		var err error
+		m.file, err = ioutil.ReadAll(reader)
+		m.version = version
+		return err
 	}
 	return store.ErrVersionConflict
 }
@@ -50,7 +54,20 @@ func (m *mockStore) SafePut(version time.Time, reader io.Reader) error {
 func (m *mockStore) Overwrite(reader io.Reader) error {
 	var err error
 	m.file, err = ioutil.ReadAll(reader)
+	m.version = time.Now()
 	return err
+}
+
+type body struct {
+	b *bytes.Buffer
+}
+
+func (b *body) Read(p []byte) (n int, err error) {
+	return b.b.Read(p)
+}
+
+func (b *body) Close() error {
+	return nil
 }
 
 func TestRun(t *testing.T) {
@@ -160,6 +177,242 @@ func TestGet(t *testing.T) {
 		if resp.StatusCode != c.expectedCode {
 			t.Fatalf("Expected %d status, got %d for case %+v", c.expectedCode, resp.StatusCode, c)
 		}
+	}
+
+}
+
+func TestHead(t *testing.T) {
+
+	currentVersion := time.Now().Format(time.RFC1123)
+	version, _ := time.Parse(time.RFC1123, currentVersion)
+
+	mock := &mockStore{
+		version: version,
+		file:    []byte("Hola"),
+		view:    []byte("<html></htmll"),
+		t:       t,
+	}
+
+	cases := []struct {
+		token           string
+		path            string
+		expectedVersion string
+		expectedCode    int
+	}{
+		// OK
+		{
+			token:           "test",
+			path:            "/",
+			expectedCode:    200,
+			expectedVersion: mock.version.Format(time.RFC1123),
+		},
+		// Missing Auth
+		{
+			token:        "",
+			path:         "/",
+			expectedCode: 401,
+		},
+		// Invalid Auth
+		{
+			token:        "token",
+			path:         "/",
+			expectedCode: 401,
+		},
+		// Invalid Path
+		{
+			token:        "test",
+			path:         "/foo",
+			expectedCode: 404,
+		},
+	}
+
+	server, addr := testServer("test", mock, t)
+	defer func() {
+		if err := server.Shutdown(nil); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	client := &http.Client{}
+
+	for _, c := range cases {
+		req, err := http.NewRequest("HEAD", addr+c.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if c.token != "" {
+			req.Header.Add("Token", c.token)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp.Body.Close()
+		if resp.StatusCode != c.expectedCode {
+			t.Fatalf("Expected %d status, got %d for case %+v", c.expectedCode, resp.StatusCode, c)
+		}
+
+		if c.expectedVersion != "" && resp.Header.Get("Last-Modified") != c.expectedVersion {
+			t.Fatalf("Expected version %s, got %s for case %+v", c.expectedVersion, resp.Header.Get("Last-Modified"), c)
+		}
+	}
+
+}
+
+func TestPut(t *testing.T) {
+
+	now := time.Now()
+	currentVersion := now.Format(time.RFC1123)
+	version, _ := time.Parse(time.RFC1123, currentVersion)
+
+	mock := &mockStore{t: t}
+
+	cases := []struct {
+		storedBody      []byte
+		storedVersion   time.Time
+		token           string
+		path            string
+		body            []byte
+		version         string
+		force           bool
+		expectedCode    int
+		expectedVersion string
+		expectedBody    []byte
+	}{
+		// OK
+		{
+			storedBody:      []byte("hola"),
+			storedVersion:   version,
+			token:           "test",
+			path:            "/",
+			body:            []byte("adios"),
+			version:         now.AddDate(0, 0, 1).Format(time.RFC1123),
+			expectedCode:    200,
+			expectedVersion: now.AddDate(0, 0, 1).Format(time.RFC1123),
+			expectedBody:    []byte("adios"),
+		},
+		// Version conflict
+		{
+			storedBody:      []byte("hola"),
+			storedVersion:   version,
+			token:           "test",
+			path:            "/",
+			body:            []byte("adios"),
+			version:         now.AddDate(-1, 0, 0).Format(time.RFC1123),
+			expectedCode:    409,
+			expectedVersion: currentVersion,
+			expectedBody:    []byte("hola"),
+		},
+		// Force
+		{
+			storedBody:    []byte("hola"),
+			storedVersion: version,
+			token:         "test",
+			path:          "/",
+			body:          []byte("adios"),
+			version:       now.AddDate(0, 0, -1).Format(time.RFC1123),
+			force:         true,
+			expectedCode:  200,
+			expectedBody:  []byte("adios"),
+		},
+		// Missing Auth
+		{
+			token:        "",
+			path:         "/",
+			expectedCode: 401,
+		},
+		// Invalid Auth
+		{
+			token:        "token",
+			path:         "/",
+			expectedCode: 401,
+		},
+		// Invalid Path
+		{
+			token:        "test",
+			path:         "/foo",
+			expectedCode: 404,
+		},
+		// Invalid date
+		{
+			token:        "test",
+			path:         "/",
+			expectedCode: 400,
+			version:      "foo",
+		},
+		// Invalid body
+		{
+			storedBody:    []byte("hola"),
+			storedVersion: version,
+			token:         "test",
+			path:          "/",
+			version:       now.AddDate(0, 0, -1).Format(time.RFC1123),
+			expectedCode:  400,
+		},
+	}
+
+	server, addr := testServer("test", mock, t)
+	defer func() {
+		if err := server.Shutdown(nil); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	client := &http.Client{}
+
+	for _, c := range cases {
+		mock.file = c.storedBody
+		mock.version = c.storedVersion
+
+		req, err := http.NewRequest("PUT", addr+c.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if c.token != "" {
+			req.Header.Add("Token", c.token)
+		}
+
+		if c.version != "" {
+			req.Header.Add("Last-Modified", c.version)
+		}
+
+		if c.force {
+			req.Header.Add("Force", "true")
+		}
+
+		if len(c.body) > 0 {
+			req.Body = &body{bytes.NewBuffer(c.body)}
+			req.ContentLength = int64(len(c.body))
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp.Body.Close()
+		if resp.StatusCode != c.expectedCode {
+			t.Fatalf("Expected %d status, got %d for case %+v", c.expectedCode, resp.StatusCode, c)
+		}
+
+		if c.expectedVersion != "" && mock.version.Format(time.RFC1123) != c.expectedVersion {
+			t.Fatalf("Expected version %s, got %s for case %+v", c.expectedVersion, mock.version.Format(time.RFC1123), c)
+		}
+
+		if len(c.expectedBody) > 0 {
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if string(mock.file) != string(c.expectedBody) {
+				t.Fatalf("Expected body %s, got %s for case %+v", string(c.expectedBody), string(mock.file), c)
+			}
+		}
+
 	}
 
 }

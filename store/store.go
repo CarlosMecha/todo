@@ -27,9 +27,9 @@ const htmlView = `
         <div id="file" hidden>%s</div>
         <div id="view" style="width: 600px; padding: 0 10px"></div>
         <script type="text/javascript">
-        (function (d){
+        (function (d, s){
             var file = d.getElementById("file").textContent;
-            d.getElementById("view").innerHTML = (new showdown.Converter()).makeHtml(atob(file));
+            d.getElementById("view").innerHTML = (new s.Converter()).makeHtml(atob(file));
         })(document, showdown)
       </script>
     </body>

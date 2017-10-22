@@ -172,16 +172,28 @@ func (h *handler) put(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if req.ContentLength <= 0 {
+		h.logger.Printf("Missing body or content length")
+		resp.WriteHeader(400)
+		return
+	}
+
 	force := req.Header.Get("Force")
-	if force != "" {
+	if force == "" || force == "false" {
 		err = h.store.SafePut(version, req.Body)
 	} else {
+		h.logger.Printf("Requested FORCE put")
 		err = h.store.Overwrite(req.Body)
 	}
 
 	if err != nil {
-		h.logger.Printf("Error writing file")
-		resp.WriteHeader(500)
+		if err != store.ErrVersionConflict {
+			h.logger.Printf("Error writing file")
+			resp.WriteHeader(500)
+			return
+		}
+		h.logger.Printf("Version conflict writing file")
+		resp.WriteHeader(409)
 		return
 	}
 
