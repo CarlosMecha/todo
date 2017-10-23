@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"errors"
+	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -9,6 +12,9 @@ import (
 
 	"github.com/carlosmecha/todo/store"
 )
+
+// SizeLimit is the max size of the request body (1MB)
+const SizeLimit = int64(1 * 1024 * 1024)
 
 var (
 	// ErrNoAuthProvided when the request doesn't have the auth token
@@ -52,6 +58,12 @@ func RunServer(token, addr string, store store.Store) *http.Server {
 func (h *handler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 	h.logger.Printf("Request %s: %s, Content Length %d, Token %s", req.Method, req.URL.Path, req.ContentLength, req.Header.Get("Token"))
 	defer req.Body.Close()
+
+	if req.Method == "GET" && req.URL.Path == "/index.html" {
+		h.getView(resp, req)
+		h.logger.Printf("View served")
+		return
+	}
 
 	if err := h.auth(req); err != nil {
 		h.logger.Printf("Unauthorized request")
@@ -111,7 +123,7 @@ func (h *handler) head(resp http.ResponseWriter, req *http.Request) {
 	resp.WriteHeader(200)
 }
 
-// get returns the file or a web view.
+// get returns the file.
 func (h *handler) get(resp http.ResponseWriter, req *http.Request) {
 	switch req.URL.Path {
 	case "":
@@ -146,19 +158,21 @@ func (h *handler) get(resp http.ResponseWriter, req *http.Request) {
 			return
 		}
 		resp.Header().Add("Last-Modified", version.Format(time.RFC1123))
-	case "/view.html":
-		req.Header.Add("Content-Type", "text/html; charset=utf-8")
-		if err := h.store.GetHTMLView(resp); err != nil {
-			h.logger.Printf("Error getting view")
-			resp.WriteHeader(500)
-			return
-		}
 	default:
 		h.logger.Printf("Invalid path")
 		resp.WriteHeader(404)
 		return
 	}
 
+}
+
+// getView returns the HTML content.
+func (h *handler) getView(resp http.ResponseWriter, req *http.Request) {
+	req.Header.Add("Content-Type", "text/html; charset=utf-8")
+	if _, err := resp.Write([]byte(htmlView)); err != nil {
+		h.logger.Printf("Error getting view")
+		resp.WriteHeader(500)
+	}
 }
 
 func (h *handler) put(resp http.ResponseWriter, req *http.Request) {
@@ -182,12 +196,25 @@ func (h *handler) put(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if req.ContentLength >= SizeLimit {
+		h.logger.Printf("Body too large")
+		resp.WriteHeader(413)
+		return
+	}
+
+	reader, err := copyBody(req.Body)
+	if err != nil {
+		h.logger.Printf("Error reading body")
+		resp.WriteHeader(500)
+		return
+	}
+
 	force := req.Header.Get("Force")
 	if force == "" || force == "false" {
-		err = h.store.SafePut(version, req.Body)
+		err = h.store.SafePut(version, req.ContentLength, reader)
 	} else {
 		h.logger.Printf("Requested FORCE put")
-		err = h.store.Overwrite(req.Body)
+		err = h.store.Overwrite(req.ContentLength, reader)
 	}
 
 	if err != nil {
@@ -203,4 +230,12 @@ func (h *handler) put(resp http.ResponseWriter, req *http.Request) {
 
 	resp.Header().Add("Last-Modified", version.Format(time.RFC1123))
 	resp.WriteHeader(200)
+}
+
+func copyBody(body io.Reader) (*bytes.Reader, error) {
+	content, err := ioutil.ReadAll(body)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(content), nil
 }

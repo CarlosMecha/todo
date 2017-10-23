@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
@@ -37,7 +36,7 @@ func (m *s3mock) GetObject(input *s3.GetObjectInput) (*s3.GetObjectOutput, error
 		Body:          buffer,
 		ContentLength: aws.Int64(int64(len(m.data[url]))),
 		ContentType:   aws.String("text/plan"),
-		Metadata:      map[string]*string{"version": aws.String(m.version[url])},
+		Metadata:      map[string]*string{Version: aws.String(m.version[url])},
 	}, nil
 }
 
@@ -51,7 +50,7 @@ func (m *s3mock) HeadObject(input *s3.HeadObjectInput) (*s3.HeadObjectOutput, er
 	return &s3.HeadObjectOutput{
 		ContentLength: aws.Int64(int64(len(m.data[url]))),
 		ContentType:   aws.String("text/plan"),
-		Metadata:      map[string]*string{"version": aws.String(m.version[url])},
+		Metadata:      map[string]*string{Version: aws.String(m.version[url])},
 	}, nil
 }
 
@@ -68,7 +67,7 @@ func (m *s3mock) PutObject(input *s3.PutObjectInput) (*s3.PutObjectOutput, error
 	}
 
 	m.data[url] = b.Bytes()
-	m.version[url] = *input.Metadata["version"]
+	m.version[url] = *input.Metadata[Version]
 
 	return &s3.PutObjectOutput{}, nil
 }
@@ -226,71 +225,6 @@ func TestGet(t *testing.T) {
 
 }
 
-func TestGetHTMLView(t *testing.T) {
-
-	now := time.Now()
-	currentVersion := now.Format(time.RFC1123)
-	version, _ := time.Parse(time.RFC1123, currentVersion)
-
-	cases := []struct {
-		key           string
-		bucket        string
-		expectedBody  []byte
-		expectedError error
-	}{
-		// OK
-		{
-			key:          "test",
-			bucket:       "test",
-			expectedBody: []byte("hola"),
-		},
-		// Not found
-		{
-			key:           "foo",
-			bucket:        "bar",
-			expectedError: ErrNotFound,
-		},
-	}
-
-	mock := &s3mock{
-		data: map[string][]byte{
-			"s3://test/test": []byte("hola"),
-		},
-		version: map[string]string{
-			"s3://test/test": version.Format(time.RFC1123),
-		},
-		t: t,
-	}
-
-	for _, c := range cases {
-		s := &store{
-			key:    aws.String(c.key),
-			bucket: aws.String(c.bucket),
-			logger: log.New(os.Stdout, "", log.LstdFlags),
-			s3:     mock,
-		}
-
-		buff := &bytes.Buffer{}
-
-		if err := s.GetHTMLView(buff); err != nil {
-			if c.expectedError == nil {
-				t.Fatalf("Unexpected error %s", err.Error())
-			} else if c.expectedError != err {
-				t.Fatalf("Expected error %s, got %s", c.expectedError.Error(), err.Error())
-			}
-			continue
-		}
-
-		got := buff.String()
-		expected := fmt.Sprintf(htmlView, base64.StdEncoding.EncodeToString(c.expectedBody))
-		if expected != got {
-			t.Fatalf("Expected %s, got %s", expected, got)
-		}
-
-	}
-
-}
-
 func TestSafePut(t *testing.T) {
 
 	now := time.Now()
@@ -360,9 +294,9 @@ func TestSafePut(t *testing.T) {
 			s3:     mock,
 		}
 
-		buff := bytes.NewBuffer(c.body)
+		buff := bytes.NewReader(c.body)
 
-		if err := s.SafePut(c.version, buff); err != nil {
+		if err := s.SafePut(c.version, int64(len(c.body)), buff); err != nil {
 			if c.expectedError == nil {
 				t.Fatalf("Unexpected error %s", err.Error())
 			} else if c.expectedError != err {
@@ -431,9 +365,9 @@ func TestOverwrite(t *testing.T) {
 			s3:     mock,
 		}
 
-		buff := bytes.NewBuffer(c.body)
+		buff := bytes.NewReader(c.body)
 
-		if err := s.Overwrite(buff); err != nil {
+		if err := s.Overwrite(int64(len(c.body)), buff); err != nil {
 			t.Fatalf("Unexpected error %s", err.Error())
 		}
 

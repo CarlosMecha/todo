@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -18,7 +19,6 @@ import (
 type mockStore struct {
 	version time.Time
 	file    []byte
-	view    []byte
 	t       *testing.T
 }
 
@@ -38,12 +38,7 @@ func (m *mockStore) Get(version time.Time, writer io.Writer) (time.Time, error) 
 	return m.version, store.ErrVersionConflict
 }
 
-func (m *mockStore) GetHTMLView(writer io.Writer) error {
-	_, err := writer.Write(m.view)
-	return err
-}
-
-func (m *mockStore) SafePut(version time.Time, reader io.Reader) error {
+func (m *mockStore) SafePut(version time.Time, _ int64, reader io.ReadSeeker) error {
 	if version.After(m.version) {
 		var err error
 		m.file, err = ioutil.ReadAll(reader)
@@ -53,22 +48,11 @@ func (m *mockStore) SafePut(version time.Time, reader io.Reader) error {
 	return store.ErrVersionConflict
 }
 
-func (m *mockStore) Overwrite(reader io.Reader) error {
+func (m *mockStore) Overwrite(_ int64, reader io.ReadSeeker) error {
 	var err error
 	m.file, err = ioutil.ReadAll(reader)
 	m.version = time.Now()
 	return err
-}
-
-func TestRun(t *testing.T) {
-
-	server := RunServer("token", ":0", &mockStore{})
-
-	time.Sleep(1)
-	if err := server.Shutdown(nil); err != nil {
-		t.Fatal(err)
-	}
-
 }
 
 func TestGet(t *testing.T) {
@@ -79,7 +63,6 @@ func TestGet(t *testing.T) {
 	mock := &mockStore{
 		version: version,
 		file:    []byte("Hola"),
-		view:    []byte("<html></htmll"),
 		t:       t,
 	}
 
@@ -95,10 +78,10 @@ func TestGet(t *testing.T) {
 			path:         "/",
 			expectedCode: 200,
 		},
-		// OK
+		// OK (view)
 		{
 			token:        "test",
-			path:         "/view.html",
+			path:         "/index.html",
 			expectedCode: 200,
 		},
 		// Missing Auth
@@ -143,11 +126,7 @@ func TestGet(t *testing.T) {
 	}
 
 	server, addr := testServer("test", mock, t)
-	defer func() {
-		if err := server.Shutdown(nil); err != nil {
-			t.Fatal(err)
-		}
-	}()
+	defer shutdown(server, t)
 
 	client := &http.Client{}
 
@@ -178,6 +157,48 @@ func TestGet(t *testing.T) {
 
 }
 
+func TestGetView(t *testing.T) {
+
+	cases := []struct {
+		path         string
+		expectedCode int
+	}{
+		// OK
+		{
+			path:         "/index.html",
+			expectedCode: 200,
+		},
+		// Missing Auth
+		{
+			path:         "/",
+			expectedCode: 401,
+		},
+	}
+
+	server, addr := testServer("test", &mockStore{}, t)
+	defer shutdown(server, t)
+
+	client := &http.Client{}
+
+	for _, c := range cases {
+		req, err := http.NewRequest("GET", addr+c.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp.Body.Close()
+		if resp.StatusCode != c.expectedCode {
+			t.Fatalf("Expected %d status, got %d for case %+v", c.expectedCode, resp.StatusCode, c)
+		}
+	}
+
+}
+
 func TestHead(t *testing.T) {
 
 	currentVersion := time.Now().Format(time.RFC1123)
@@ -186,7 +207,6 @@ func TestHead(t *testing.T) {
 	mock := &mockStore{
 		version: version,
 		file:    []byte("Hola"),
-		view:    []byte("<html></htmll"),
 		t:       t,
 	}
 
@@ -224,11 +244,7 @@ func TestHead(t *testing.T) {
 	}
 
 	server, addr := testServer("test", mock, t)
-	defer func() {
-		if err := server.Shutdown(nil); err != nil {
-			t.Fatal(err)
-		}
-	}()
+	defer shutdown(server, t)
 
 	client := &http.Client{}
 
@@ -349,14 +365,20 @@ func TestPut(t *testing.T) {
 			version:       now.AddDate(0, 0, -1).Format(time.RFC1123),
 			expectedCode:  400,
 		},
+		// Too large
+		{
+			storedBody:    []byte("hola"),
+			storedVersion: version,
+			token:         "test",
+			path:          "/",
+			version:       now.AddDate(0, 0, -1).Format(time.RFC1123),
+			body:          make([]byte, 1*1024*1024),
+			expectedCode:  413,
+		},
 	}
 
 	server, addr := testServer("test", mock, t)
-	defer func() {
-		if err := server.Shutdown(nil); err != nil {
-			t.Fatal(err)
-		}
-	}()
+	defer shutdown(server, t)
 
 	client := &http.Client{}
 
@@ -434,9 +456,18 @@ func testServer(token string, store store.Store, t *testing.T) (*http.Server, st
 
 	go func() {
 		if err := server.Serve(listener); err != nil {
-			t.Fatal(err)
+			t.Log(err)
 		}
 	}()
 
 	return server, fmt.Sprintf("http://localhost:%d", port)
+}
+
+func shutdown(server *http.Server, t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		t.Logf("error shuting down the server: %s", err.Error())
+	}
 }
