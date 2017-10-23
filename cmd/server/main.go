@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 
@@ -13,6 +14,8 @@ import (
 
 func main() {
 
+	cert := flag.String("cert", "", "Cert file")
+	certKey := flag.String("cert-key", "", "Cert key file")
 	token := flag.String("token", "", "Authentication token")
 	bucket := flag.String("bucket", "cmecha-cloud", "S3 bucket")
 	key := flag.String("key", "todo.md", "S3 key")
@@ -22,12 +25,19 @@ func main() {
 	flag.Parse()
 
 	if len(*token) == 0 {
-		fmt.Printf("Authentication token required")
-		os.Exit(1)
+		t := os.Getenv("TOKEN")
+		if len(t) == 0 {
+			fmt.Printf("Authentication token required")
+			os.Exit(1)
+		}
+		*token = t
 	}
 
-	s := store.NewStore(*bucket, *key, *region)
-	http := server.RunServer(*token, fmt.Sprintf("localhost:%d", *port), s)
+	logger := log.New(os.Stdout, "", log.LstdFlags)
+	logger.Printf("Starting server in port %d", *port)
+
+	s := store.NewStore(*bucket, *key, *region, logger)
+	http := server.RunServer(*token, fmt.Sprintf("localhost:%d", *port), *cert, *certKey, s, logger)
 
 	stop := make(chan os.Signal, 1)
 	defer close(stop)
@@ -35,5 +45,5 @@ func main() {
 	<-stop
 
 	http.Shutdown(context.Background())
-
+	logger.Print("Server stopped")
 }

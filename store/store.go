@@ -5,7 +5,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -59,7 +58,7 @@ type store struct {
 }
 
 // NewStore creates a new store using the provided key and bucket
-func NewStore(bucket, key, region string) *store {
+func NewStore(bucket, key, region string, logger *log.Logger) *store {
 	s3Client := s3.New(session.New(&aws.Config{
 		Region:     aws.String(region),
 		MaxRetries: aws.Int(5),
@@ -69,7 +68,7 @@ func NewStore(bucket, key, region string) *store {
 		s3:     s3Client,
 		bucket: aws.String(bucket),
 		key:    aws.String(key),
-		logger: log.New(os.Stdout, "store->", log.LstdFlags),
+		logger: logger,
 	}
 }
 

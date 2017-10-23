@@ -7,7 +7,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/carlosmecha/todo/store"
@@ -32,12 +31,12 @@ type handler struct {
 }
 
 // RunServer starts the server listening in the specified address.
-func RunServer(token, addr string, store store.Store) *http.Server {
+func RunServer(token, addr, cert, key string, store store.Store, logger *log.Logger) *http.Server {
 
 	h := &handler{
 		authToken: token,
 		store:     store,
-		logger:    log.New(os.Stdout, "", log.LstdFlags),
+		logger:    logger,
 	}
 
 	server := &http.Server{
@@ -46,7 +45,7 @@ func RunServer(token, addr string, store store.Store) *http.Server {
 	}
 
 	go func() {
-		if err := server.ListenAndServe(); err != nil {
+		if err := server.ListenAndServeTLS(cert, key); err != nil {
 			h.logger.Fatalf("Server shutdown: %s", err.Error())
 		}
 	}()
