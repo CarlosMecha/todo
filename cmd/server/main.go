@@ -20,7 +20,7 @@ func main() {
 	bucket := flag.String("bucket", "cmecha-cloud", "S3 bucket")
 	key := flag.String("key", "todo.md", "S3 key")
 	region := flag.String("region", "us-west-2", "S3 region")
-	port := flag.Int("port", 6060, "HTTP port")
+	port := flag.Int("port", 6443, "HTTP port")
 
 	flag.Parse()
 
@@ -37,7 +37,7 @@ func main() {
 	logger.Printf("Starting server in port %d", *port)
 
 	s := store.NewStore(*bucket, *key, *region, logger)
-	http := server.RunServer(*token, fmt.Sprintf("localhost:%d", *port), *cert, *certKey, s, logger)
+	http := server.RunServer(*token, fmt.Sprintf("0.0.0.0:%d", *port), *cert, *certKey, s, logger)
 
 	stop := make(chan os.Signal, 1)
 	defer close(stop)
