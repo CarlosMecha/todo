@@ -31,7 +31,7 @@ type handler struct {
 }
 
 // RunServer starts the server listening in the specified address.
-func RunServer(token, addr, cert, key string, store store.Store, logger *log.Logger) *http.Server {
+func RunServer(token, addr string, store store.Store, logger *log.Logger) *http.Server {
 
 	h := &handler{
 		authToken: token,
@@ -45,7 +45,7 @@ func RunServer(token, addr, cert, key string, store store.Store, logger *log.Log
 	}
 
 	go func() {
-		if err := server.ListenAndServeTLS(cert, key); err != nil {
+		if err := server.ListenAndServe(); err != nil {
 			h.logger.Fatalf("Server shutdown: %s", err.Error())
 		}
 	}()

@@ -16,6 +16,6 @@ docker-run: docker-build
 		-e AWS_SECRET_ACCESS_KEY=$(AWS_SECRET_ACCESS_KEY)\
 		-e AWS_ACCESS_KEY_ID=$(AWS_ACCESS_KEY_ID)\
 		-e AWS_SECURITY_TOKEN=$(AWS_SECURITY_TOKEN)\
-		--net host -p 6443:6443 carlosmecha/todo:latest -key=todo-test.md
+		--net host -p 6060:80 carlosmecha/todo:latest -key=todo-test.md
 
 .PHONY: test build run docker-build
