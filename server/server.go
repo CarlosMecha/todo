@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"errors"
+	"html/template"
 	"io"
 	"io/ioutil"
 	"log"
@@ -25,18 +26,18 @@ var (
 
 // handler takes care of the requests. Is a net/http.Handler
 type handler struct {
-	authToken string
-	logger    *log.Logger
-	store     store.Store
+	logger *log.Logger
+	store  store.Store
+	view   *template.Template
 }
 
 // RunServer starts the server listening in the specified address.
-func RunServer(token, addr string, store store.Store, logger *log.Logger) *http.Server {
+func RunServer(addr string, store store.Store, logger *log.Logger) *http.Server {
 
 	h := &handler{
-		authToken: token,
-		store:     store,
-		logger:    logger,
+		store:  store,
+		logger: logger,
+		view:   template.Must(template.New("view").Parse(htmlView)),
 	}
 
 	server := &http.Server{
@@ -64,17 +65,6 @@ func (h *handler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := h.auth(req); err != nil {
-		h.logger.Printf("Unauthorized request")
-		resp.WriteHeader(401)
-		if _, err := resp.Write([]byte("Unauthorized request\n")); err != nil {
-			h.logger.Fatalf("Unable to write the response: %s", err.Error())
-			resp.WriteHeader(500)
-			return
-		}
-		return
-	}
-
 	switch req.Method {
 	case "GET":
 		h.get(resp, req)
@@ -88,19 +78,6 @@ func (h *handler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 	}
 
 	h.logger.Printf("Request served")
-}
-
-// auth authenticates the request using the provided token
-func (h *handler) auth(req *http.Request) error {
-	token := req.Header.Get("Token")
-	if token == "" {
-		return ErrNoAuthProvided
-	}
-	if token != h.authToken {
-		return ErrInvalidAuth
-	}
-
-	return nil
 }
 
 // head retrieves the information about the file.
@@ -168,7 +145,14 @@ func (h *handler) get(resp http.ResponseWriter, req *http.Request) {
 // getView returns the HTML content.
 func (h *handler) getView(resp http.ResponseWriter, req *http.Request) {
 	req.Header.Add("Content-Type", "text/html; charset=utf-8")
-	if _, err := resp.Write([]byte(htmlView)); err != nil {
+	buf := &bytes.Buffer{}
+	if _, err := h.store.Get(time.Time{}, buf); err != nil {
+		h.logger.Printf("Error getting file")
+		resp.WriteHeader(500)
+		return
+	}
+
+	if err := h.view.Execute(resp, struct{ Body string }{buf.String()}); err != nil {
 		h.logger.Printf("Error getting view")
 		resp.WriteHeader(500)
 	}

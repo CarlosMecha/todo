@@ -14,25 +14,12 @@ const htmlView = `
             <input type="submit">
         </form>
         <div id="view" style="width: 600px; padding: 0 10px"></div>
+        <div id="markdown">{ .Body }</div>
         <script type="text/javascript">
-        function get(){
-            var input = document.getElementById("auth");
+            var markdown = document.getElementById("markdown");
             var view = document.getElementById("view");
-			var xmlhttp = new XMLHttpRequest();
-			var token = input.value
-            xmlhttp.onreadystatechange = function(){
-                if (xmlhttp.readyState == 4 && xmlhttp.status == 200){
-                    view.innerHTML = (window.markdownit()).render(xmlhttp.responseText);
-                    document.getElementsByTagName("form")[0].style.visibility = "hidden";
-                } else {
-                    input.value = "Error requesting file";
-                }
-            }
-            xmlhttp.open("GET", "/", true);
-            xmlhttp.setRequestHeader("Token", token);
-			xmlhttp.send();
-			return false
-        }
+            view.innerHTML = (window.markdownit()).render(markdown.text);
+			markdown.style.visibility = "hidden";
       </script>
     </body>
 </html>

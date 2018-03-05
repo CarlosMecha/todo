@@ -14,7 +14,6 @@ import (
 
 func main() {
 
-	token := flag.String("token", "", "Authentication token")
 	bucket := flag.String("bucket", "cmecha-cloud", "S3 bucket")
 	key := flag.String("key", "todo.md", "S3 key")
 	region := flag.String("region", "us-west-2", "S3 region")
@@ -22,20 +21,11 @@ func main() {
 
 	flag.Parse()
 
-	if len(*token) == 0 {
-		t := os.Getenv("TOKEN")
-		if len(t) == 0 {
-			fmt.Printf("Authentication token required")
-			os.Exit(1)
-		}
-		*token = t
-	}
-
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 	logger.Printf("Starting server in port %d", *port)
 
 	s := store.NewStore(*bucket, *key, *region, logger)
-	http := server.RunServer(*token, fmt.Sprintf("0.0.0.0:%d", *port), s, logger)
+	http := server.RunServer(fmt.Sprintf("0.0.0.0:%d", *port), s, logger)
 
 	stop := make(chan os.Signal, 1)
 	defer close(stop)

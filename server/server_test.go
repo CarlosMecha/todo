@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"html/template"
 	"io"
 	"io/ioutil"
 	"log"
@@ -67,58 +68,39 @@ func TestGet(t *testing.T) {
 	}
 
 	cases := []struct {
-		token        string
 		path         string
 		version      string
 		expectedCode int
 	}{
 		// OK
 		{
-			token:        "test",
 			path:         "/",
 			expectedCode: 200,
 		},
 		// OK (view)
 		{
-			token:        "test",
 			path:         "/index.html",
 			expectedCode: 200,
 		},
-		// Missing Auth
-		{
-			token:        "",
-			path:         "/",
-			expectedCode: 401,
-		},
-		// Invalid Auth
-		{
-			token:        "token",
-			path:         "/",
-			expectedCode: 401,
-		},
 		// Invalid Path
 		{
-			token:        "test",
 			path:         "/foo",
 			expectedCode: 404,
 		},
 		// Not modified
 		{
-			token:        "test",
 			path:         "/",
 			expectedCode: 304,
 			version:      mock.version.Format(time.RFC1123),
 		},
 		// Newer date
 		{
-			token:        "test",
 			path:         "/",
 			expectedCode: 409,
 			version:      mock.version.AddDate(1, 0, 0).Format(time.RFC1123),
 		},
 		// Invalid date
 		{
-			token:        "test",
 			path:         "/",
 			expectedCode: 400,
 			version:      "foo",
@@ -134,10 +116,6 @@ func TestGet(t *testing.T) {
 		req, err := http.NewRequest("GET", addr+c.path, nil)
 		if err != nil {
 			t.Fatal(err)
-		}
-
-		if c.token != "" {
-			req.Header.Add("Token", c.token)
 		}
 
 		if c.version != "" {
@@ -159,6 +137,15 @@ func TestGet(t *testing.T) {
 
 func TestGetView(t *testing.T) {
 
+	currentVersion := time.Now().Format(time.RFC1123)
+	version, _ := time.Parse(time.RFC1123, currentVersion)
+
+	mock := &mockStore{
+		version: version,
+		file:    []byte("Hola"),
+		t:       t,
+	}
+
 	cases := []struct {
 		path         string
 		expectedCode int
@@ -168,14 +155,9 @@ func TestGetView(t *testing.T) {
 			path:         "/index.html",
 			expectedCode: 200,
 		},
-		// Missing Auth
-		{
-			path:         "/",
-			expectedCode: 401,
-		},
 	}
 
-	server, addr := testServer("test", &mockStore{}, t)
+	server, addr := testServer("test", mock, t)
 	defer shutdown(server, t)
 
 	client := &http.Client{}
@@ -211,33 +193,18 @@ func TestHead(t *testing.T) {
 	}
 
 	cases := []struct {
-		token           string
 		path            string
 		expectedVersion string
 		expectedCode    int
 	}{
 		// OK
 		{
-			token:           "test",
 			path:            "/",
 			expectedCode:    200,
 			expectedVersion: mock.version.Format(time.RFC1123),
 		},
-		// Missing Auth
-		{
-			token:        "",
-			path:         "/",
-			expectedCode: 401,
-		},
-		// Invalid Auth
-		{
-			token:        "token",
-			path:         "/",
-			expectedCode: 401,
-		},
 		// Invalid Path
 		{
-			token:        "test",
 			path:         "/foo",
 			expectedCode: 404,
 		},
@@ -252,10 +219,6 @@ func TestHead(t *testing.T) {
 		req, err := http.NewRequest("HEAD", addr+c.path, nil)
 		if err != nil {
 			t.Fatal(err)
-		}
-
-		if c.token != "" {
-			req.Header.Add("Token", c.token)
 		}
 
 		resp, err := client.Do(req)
@@ -286,7 +249,6 @@ func TestPut(t *testing.T) {
 	cases := []struct {
 		storedBody      []byte
 		storedVersion   time.Time
-		token           string
 		path            string
 		body            []byte
 		version         string
@@ -299,7 +261,6 @@ func TestPut(t *testing.T) {
 		{
 			storedBody:      []byte("hola"),
 			storedVersion:   version,
-			token:           "test",
 			path:            "/",
 			body:            []byte("adios"),
 			version:         now.AddDate(0, 0, 1).Format(time.RFC1123),
@@ -311,7 +272,6 @@ func TestPut(t *testing.T) {
 		{
 			storedBody:      []byte("hola"),
 			storedVersion:   version,
-			token:           "test",
 			path:            "/",
 			body:            []byte("adios"),
 			version:         now.AddDate(-1, 0, 0).Format(time.RFC1123),
@@ -323,7 +283,6 @@ func TestPut(t *testing.T) {
 		{
 			storedBody:    []byte("hola"),
 			storedVersion: version,
-			token:         "test",
 			path:          "/",
 			body:          []byte("adios"),
 			version:       now.AddDate(0, 0, -1).Format(time.RFC1123),
@@ -331,27 +290,13 @@ func TestPut(t *testing.T) {
 			expectedCode:  200,
 			expectedBody:  []byte("adios"),
 		},
-		// Missing Auth
-		{
-			token:        "",
-			path:         "/",
-			expectedCode: 401,
-		},
-		// Invalid Auth
-		{
-			token:        "token",
-			path:         "/",
-			expectedCode: 401,
-		},
 		// Invalid Path
 		{
-			token:        "test",
 			path:         "/foo",
 			expectedCode: 404,
 		},
 		// Invalid date
 		{
-			token:        "test",
 			path:         "/",
 			expectedCode: 400,
 			version:      "foo",
@@ -360,7 +305,6 @@ func TestPut(t *testing.T) {
 		{
 			storedBody:    []byte("hola"),
 			storedVersion: version,
-			token:         "test",
 			path:          "/",
 			version:       now.AddDate(0, 0, -1).Format(time.RFC1123),
 			expectedCode:  400,
@@ -369,7 +313,6 @@ func TestPut(t *testing.T) {
 		{
 			storedBody:    []byte("hola"),
 			storedVersion: version,
-			token:         "test",
 			path:          "/",
 			version:       now.AddDate(0, 0, -1).Format(time.RFC1123),
 			body:          make([]byte, 1*1024*1024),
@@ -389,10 +332,6 @@ func TestPut(t *testing.T) {
 		req, err := http.NewRequest("PUT", addr+c.path, nil)
 		if err != nil {
 			t.Fatal(err)
-		}
-
-		if c.token != "" {
-			req.Header.Add("Token", c.token)
 		}
 
 		if c.version != "" {
@@ -445,9 +384,9 @@ func testServer(token string, store store.Store, t *testing.T) (*http.Server, st
 	port := listener.Addr().(*net.TCPAddr).Port
 
 	h := &handler{
-		authToken: token,
-		store:     store,
-		logger:    log.New(os.Stdout, "", log.LstdFlags),
+		view:   template.Must(template.New("view").Parse(htmlView)),
+		store:  store,
+		logger: log.New(os.Stdout, "", log.LstdFlags),
 	}
 
 	server := &http.Server{
